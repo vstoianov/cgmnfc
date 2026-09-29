@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">Libre2 Key</string>
+
+    <string name="ready">Hold the sensor against the top of the phone</string>
+    <string name="reading">Reading sensor…</string>
+    <string name="scanned">Read sensor %1$s</string>
+    <string name="scan_failed">Scan failed: %1$s</string>
+    <string name="no_nfc">This phone has no NFC hardware</string>
+    <string name="nfc_disabled">NFC is turned off — enable it in Settings</string>
+    <string name="not_nfcv">Not an ISO 15693 tag, so not a Libre sensor</string>
+
+    <string name="enable_streaming">Enable BLE streaming on scan</string>
+    <string name="enable_streaming_hint_off">Read only: reports the sensor identity and, if a key was already generated, repeats it. Nothing is written to the sensor.</string>
+    <string name="enable_streaming_hint_on">Writes the unlock code to the sensor and turns its Bluetooth on. This invalidates the key any other app or device is currently using for this sensor.</string>
+    <string name="unlock_code">Unlock code (any 32-bit number)</string>
+
+    <string name="copy_json">Copy JSON</string>
+    <string name="share">Share</string>
+    <string name="copied">Copied to clipboard</string>
+    <string name="glucose_reading">%1$.1f mmol/L (%2$d mg/dL)</string>
+    <string name="glucose_age">%1$d min ago</string>
+    <string name="serving">Zepp is on another phone. Share this JSON to that iPhone and paste it in Zepp → Libre 2+.\nSame Wi‑Fi: %1$s</string>
+    <string name="server_notification_title">Libre2 Key ready</string>
+    <string name="server_notification_text">Share the JSON to the iPhone that runs Zepp</string>
+    <string name="server_stop">Stop</string>
+
+    <string name="note_gen2">This is a generation-2 security sensor. Its BLE unlock is not covered by the open Libre 2 crypto, so the key cannot be derived here.</string>
+    <string name="note_unsupported_type">Sensor type %1$s does not use the Libre 2 BLE streaming protocol.</string>
+    <string name="note_crc_failed">FRAM checksums did not validate, so the sensor data could not be confirmed. The keys may still be correct.</string>
+    <string name="note_code_not_written">Typed unlock code %1$d was not written. JSON still uses %2$d from the last streaming enable. Tick \"Enable BLE streaming\" and scan again to write %1$d.</string>
+</resources>
