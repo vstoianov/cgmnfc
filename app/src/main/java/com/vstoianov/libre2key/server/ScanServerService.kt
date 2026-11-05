@@ -15,11 +15,13 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.vstoianov.libre2key.MainActivity
 import com.vstoianov.libre2key.R
+import com.vstoianov.libre2key.watch.RfcommPullServer
 
 class ScanServerService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var server: ScanHttpServer? = null
+    private var rfcommServer: RfcommPullServer? = null
     private val idleStop = Runnable { stopSelf() }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -30,15 +32,24 @@ class ScanServerService : Service() {
             return START_NOT_STICKY
         }
         startInForeground()
+        val provider = {
+            getSharedPreferences(MainActivity.PREFS, Context.MODE_PRIVATE)
+                .getString(MainActivity.KEY_SCAN_JSON, null)
+        }
         if (server == null) {
             server = ScanHttpServer(
-                jsonProvider = {
-                    getSharedPreferences(MainActivity.PREFS, Context.MODE_PRIVATE)
-                        .getString(MainActivity.KEY_SCAN_JSON, null)
-                },
+                jsonProvider = provider,
                 onServed = { bumpIdleTimer() }
             ).also { it.start() }
         }
+        if (rfcommServer == null) {
+            rfcommServer = RfcommPullServer(
+                context = applicationContext,
+                jsonProvider = provider,
+                onServed = { bumpIdleTimer() }
+            )
+        }
+        rfcommServer?.start()
         bumpIdleTimer()
         return START_STICKY
     }
@@ -47,6 +58,8 @@ class ScanServerService : Service() {
         handler.removeCallbacks(idleStop)
         server?.stop()
         server = null
+        rfcommServer?.stop()
+        rfcommServer = null
         super.onDestroy()
     }
 

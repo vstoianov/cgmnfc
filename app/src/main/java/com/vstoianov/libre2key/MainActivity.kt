@@ -1,9 +1,11 @@
 package com.vstoianov.libre2key
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.NfcV
@@ -23,6 +25,8 @@ import com.vstoianov.libre2key.libre.SensorType
 import com.vstoianov.libre2key.nfc.LibreNfc
 import com.vstoianov.libre2key.server.ScanHttpServer
 import com.vstoianov.libre2key.server.ScanServerService
+import com.vstoianov.libre2key.watch.AmazCgmSender
+import com.vstoianov.libre2key.watch.SendResult
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -37,6 +41,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private lateinit var binding: ActivityMainBinding
     private var nfcAdapter: NfcAdapter? = null
     private var lastResult: ScanResult? = null
+    private var pendingWatchSend = false
+    private var sendingToWatch = false
 
     // NFC callbacks arrive off the UI thread — never read views from there.
     private val enableStreamingWanted = AtomicBoolean(true)
@@ -68,18 +74,41 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             prefs.edit().putLong(KEY_LAST_CODE, code).apply()
         }
 
+        binding.sendWatchButton.setOnClickListener { onSendWatchClicked() }
         binding.copyButton.setOnClickListener { copyJson() }
         binding.shareButton.setOnClickListener { shareJson() }
         setResultButtonsEnabled(false)
-        requestNotifyPermission()
+        binding.sendWatchButton.isEnabled = !prefs.getString(KEY_SCAN_JSON, null).isNullOrBlank()
+        requestRuntimePermissions()
     }
 
-    private fun requestNotifyPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) return
-        requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    private fun requestRuntimePermissions() {
+        val needed = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            needed += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        if (needed.isNotEmpty()) {
+            requestPermissions(needed.toTypedArray(), REQ_PERMS)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BT_SEND && pendingWatchSend) {
+            pendingWatchSend = false
+            sendToAmazCgm(silentFailure = false)
+        }
     }
 
     override fun onResume() {
@@ -219,6 +248,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         ScanServerService.start(this)
         binding.serverStatus.visibility = android.view.View.VISIBLE
         binding.serverStatus.text = getString(R.string.serving, scannerUrl())
+        sendToAmazCgm(silentFailure = true)
     }
 
     private fun showGlucose(result: ScanResult) {
@@ -228,9 +258,16 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             return
         }
         val mmol = mgdl / 18.0
+        val day1 = (result.fram?.ageMinutes ?: Int.MAX_VALUE) < DAY1_MINUTES
         binding.glucose.visibility = android.view.View.VISIBLE
-        binding.glucose.text = getString(R.string.glucose_reading, mmol, mgdl) +
-            "  ·  " + getString(R.string.glucose_age, 0)
+        val text = StringBuilder()
+            .append(getString(R.string.glucose_reading, mmol, mgdl))
+            .append('\n')
+            .append(getString(R.string.glucose_factory))
+        if (day1) {
+            text.append('\n').append(getString(R.string.glucose_day1))
+        }
+        binding.glucose.text = text
     }
 
     private fun persistScanJson(result: ScanResult) {
@@ -264,6 +301,10 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 sb.appendLine(
                     "  Glucose            ${"%.1f".format(Locale.US, mmol)} mmol/L ($mgdl mg/dL)"
                 )
+                sb.appendLine("  Algorithm          factory (LibreLink 2.3)")
+                if (it.ageMinutes < DAY1_MINUTES) {
+                    sb.appendLine("  Note               Day 1: reads lower than LibreLink")
+                }
             }
         }
         result.framError?.let {
@@ -309,8 +350,50 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     }
 
     private fun setResultButtonsEnabled(enabled: Boolean) {
+        binding.sendWatchButton.isEnabled = enabled
         binding.copyButton.isEnabled = enabled
         binding.shareButton.isEnabled = enabled
+    }
+
+    private fun onSendWatchClicked() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingWatchSend = true
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BT_SEND)
+            return
+        }
+        sendToAmazCgm(silentFailure = false)
+    }
+
+    private fun sendToAmazCgm(silentFailure: Boolean) {
+        if (sendingToWatch) return
+        val json = lastResult?.toJson()?.toString()
+            ?: prefs.getString(KEY_SCAN_JSON, null)?.takeIf { it.isNotBlank() }
+            ?: return
+
+        ScanServerService.start(this)
+        sendingToWatch = true
+        binding.sendWatchButton.isEnabled = false
+        binding.sendWatchButton.setText(R.string.sending_to_amazcgm)
+
+        AmazCgmSender.send(this, json) { outcome ->
+            sendingToWatch = false
+            binding.sendWatchButton.isEnabled = true
+            binding.sendWatchButton.setText(R.string.send_to_amazcgm)
+            when (outcome) {
+                is SendResult.Success -> {
+                    val msg = getString(R.string.sent_to_amazcgm, outcome.serial, outcome.transport)
+                    binding.status.text = msg
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                }
+                is SendResult.Failure -> {
+                    if (!silentFailure) {
+                        Toast.makeText(this, outcome.reason, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     private fun copyJsonSilent() {
@@ -380,5 +463,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         const val KEY_SCAN_JSON = "scan_json"
         private const val KEY_LAST_CODE = "last_unlock_code"
         private const val DEFAULT_UNLOCK_CODE = 42L
+        private const val DAY1_MINUTES = 24 * 60
+        private const val REQ_PERMS = 1
+        private const val REQ_BT_SEND = 2
     }
 }

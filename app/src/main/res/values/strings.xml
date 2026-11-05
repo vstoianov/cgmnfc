@@ -16,8 +16,13 @@
 
     <string name="copy_json">Copy JSON</string>
     <string name="share">Share</string>
+    <string name="send_to_amazcgm">Send to AmazCGM</string>
+    <string name="sending_to_amazcgm">Sending to AmazCGM…</string>
+    <string name="sent_to_amazcgm">Sent to AmazCGM (%1$s via %2$s)</string>
     <string name="copied">Copied to clipboard</string>
     <string name="glucose_reading">%1$.1f mmol/L (%2$d mg/dL)</string>
+    <string name="glucose_factory">Factory algorithm (LibreLink 2.3)</string>
+    <string name="glucose_day1">Day 1: reads lower than LibreLink</string>
     <string name="glucose_age">%1$d min ago</string>
     <string name="serving">Zepp is on another phone. Share this JSON to that iPhone and paste it in Zepp → Libre 2+.\nSame Wi‑Fi: %1$s</string>
     <string name="server_notification_title">Libre2 Key ready</string>

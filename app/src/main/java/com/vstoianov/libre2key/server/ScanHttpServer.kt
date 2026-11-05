@@ -3,13 +3,17 @@ package com.vstoianov.libre2key.server
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 /**
- * HTTP server for GET /scan.json. Bound on all interfaces so a second phone
- * running Zepp (typical: Android NFC + iPhone Zepp) can pull on the same Wi‑Fi.
+ * HTTP server for GET /scan.json and UDP discovery responder on PORT 17580.
+ * Bound on all interfaces so a second phone running Zepp or a Wear OS watch
+ * running AmazCGM on the same Wi‑Fi can pull the scan JSON.
  */
 class ScanHttpServer(
     private val jsonProvider: () -> String?,
@@ -18,13 +22,14 @@ class ScanHttpServer(
     @Volatile
     private var running = false
     private var server: ServerSocket? = null
+    private var udpSocket: DatagramSocket? = null
     private var acceptThread: Thread? = null
+    private var udpThread: Thread? = null
 
     fun start() {
         if (running) return
         running = true
-        // Bind every interface so an iPhone on the same Wi‑Fi (Zepp) can pull.
-        // 127.0.0.1 is useless when Libre2 Key and Zepp are on different phones.
+        // Bind every interface so an iPhone on the same Wi‑Fi (Zepp) or watch (AmazCGM) can pull.
         server = ServerSocket(PORT, 8)
         acceptThread = Thread({
             while (running) {
@@ -42,6 +47,39 @@ class ScanHttpServer(
             isDaemon = true
             start()
         }
+
+        udpThread = Thread({
+            try {
+                val sock = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(PORT))
+                }
+                udpSocket = sock
+                val buf = ByteArray(1024)
+                while (running) {
+                    try {
+                        val pkt = DatagramPacket(buf, buf.size)
+                        sock.receive(pkt)
+                        val req = String(pkt.data, pkt.offset, pkt.length, StandardCharsets.UTF_8).trim()
+                        if (req.startsWith("AMAZCGM_PULL")) {
+                            val json = jsonProvider()
+                            if (!json.isNullOrBlank()) {
+                                val replyBytes = "AMAZCGM_SCAN\n$json".toByteArray(StandardCharsets.UTF_8)
+                                sock.send(DatagramPacket(replyBytes, replyBytes.size, pkt.address, pkt.port))
+                                onServed()
+                            }
+                        }
+                    } catch (_: Exception) {
+                        if (!running) break
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }, "scan-udp").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     fun stop() {
@@ -50,8 +88,14 @@ class ScanHttpServer(
             server?.close()
         } catch (_: Exception) {
         }
+        try {
+            udpSocket?.close()
+        } catch (_: Exception) {
+        }
         server = null
+        udpSocket = null
         acceptThread = null
+        udpThread = null
     }
 
     private fun handle(socket: Socket) {
