@@ -1,9 +1,7 @@
 package com.vstoianov.libre2key
 
 import com.vstoianov.libre2key.libre.FramInfo
-import com.vstoianov.libre2key.libre.Libre2Crypto
 import com.vstoianov.libre2key.libre.Sensor
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Date
 
@@ -24,11 +22,6 @@ data class ScanResult(
     val notes: List<String>
 ) {
 
-    /** The payload a BLE client writes to characteristic F001 on its next connection. */
-    fun unlockPayload(count: Int): ByteArray = Libre2Crypto.streamingUnlockPayload(
-        sensor.uid, sensor.patchInfo, unlockCode, count
-    )
-
     /** Only the fields the watch Libre 2+ app actually reads. */
     fun toJson(): JSONObject = JSONObject().apply {
         put("serial", sensor.serial)
@@ -41,18 +34,8 @@ data class ScanResult(
         // Watch must rewind to 1 after A1 1E. xDrip does the same (enableTime 42,
         // connectionIndex 1). A read-only rescan omits this so the watch keeps count.
         if (streamingWasEnabled) put("streamingEnabled", "1")
-        put(
-            "unlockPayloads",
-            JSONArray().apply {
-                for (count in nextUnlockCount until nextUnlockCount + 3) {
-                    put(
-                        JSONObject()
-                            .put("unlockCount", count)
-                            .put("payload", unlockPayload(count).hex())
-                    )
-                }
-            }
-        )
+        // No precomputed unlock payloads: the watch derives them from
+        // uid + patchInfo + unlockCode for every connection count.
         val info = fram
         val cal = info?.calibration
         if (cal != null && info.crcOk) {

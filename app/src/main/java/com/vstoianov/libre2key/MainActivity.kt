@@ -5,7 +5,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.NfcV
@@ -14,23 +16,30 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.format.DateFormat
+import android.view.View
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.core.widget.doAfterTextChanged
+import com.google.android.material.chip.Chip
+import com.google.android.material.color.DynamicColors
+import com.google.android.material.color.MaterialColors
 import com.vstoianov.libre2key.databinding.ActivityMainBinding
 import com.vstoianov.libre2key.libre.FramInfo
 import com.vstoianov.libre2key.libre.Libre2Crypto
 import com.vstoianov.libre2key.libre.Sensor
+import com.vstoianov.libre2key.libre.SensorState
 import com.vstoianov.libre2key.libre.SensorType
+import com.vstoianov.libre2key.ble.ScanBlePeripheral
+import com.vstoianov.libre2key.ble.WatchHandoffService
 import com.vstoianov.libre2key.nfc.LibreNfc
-import com.vstoianov.libre2key.server.ScanHttpServer
-import com.vstoianov.libre2key.server.ScanServerService
-import com.vstoianov.libre2key.watch.AmazCgmSender
-import com.vstoianov.libre2key.watch.SendResult
+import org.json.JSONObject
 import java.io.IOException
-import java.net.Inet4Address
-import java.net.NetworkInterface
-import java.util.Collections
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -38,11 +47,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
+    private enum class NfcState { READY, READING, DONE, ERROR, OFF, MISSING }
+
     private lateinit var binding: ActivityMainBinding
     private var nfcAdapter: NfcAdapter? = null
     private var lastResult: ScanResult? = null
-    private var pendingWatchSend = false
-    private var sendingToWatch = false
 
     // NFC callbacks arrive off the UI thread — never read views from there.
     private val enableStreamingWanted = AtomicBoolean(true)
@@ -50,10 +59,35 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
+    // Held in a field: SharedPreferences keeps listeners in a WeakHashMap.
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key in TRANSFER_KEYS) renderTransferCard()
+    }
+
+    // Refreshes the "N min left" countdown while the phone is visible.
+    private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            renderTransferCard()
+            ticker.postDelayed(this, TICK_MS)
+        }
+    }
+
+    private val enableBluetooth = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (ScanBlePeripheral.bluetoothOn(this) && hasStoredScan()) WatchHandoffService.start(this)
+        renderTransferCard()
+    }
+    private var pendingMakeVisible = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        DynamicColors.applyToActivityIfAvailable(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applyInsets()
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
@@ -74,29 +108,53 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             prefs.edit().putLong(KEY_LAST_CODE, code).apply()
         }
 
-        binding.sendWatchButton.setOnClickListener { onSendWatchClicked() }
-        binding.copyButton.setOnClickListener { copyJson() }
-        binding.shareButton.setOnClickListener { shareJson() }
-        setResultButtonsEnabled(false)
-        binding.sendWatchButton.isEnabled = !prefs.getString(KEY_SCAN_JSON, null).isNullOrBlank()
+        binding.shareJsonButton.setOnClickListener { shareJson() }
+        binding.copyJsonButton.setOnClickListener { copyJson() }
+        binding.bleVisibleButton.setOnClickListener { makeVisibleClicked() }
+
+        restoreStoredScan()
+        if (hasStoredScan()) WatchHandoffService.start(this)
         requestRuntimePermissions()
     }
 
+    override fun onStart() {
+        super.onStart()
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        renderTransferCard()
+        ticker.postDelayed(tick, TICK_MS)
+    }
+
+    override fun onStop() {
+        ticker.removeCallbacks(tick)
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        super.onStop()
+    }
+
+    private fun applyInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            binding.appBar.updatePadding(top = bars.top, left = bars.left, right = bars.right)
+            binding.scroll.updatePadding(left = bars.left, right = bars.right, bottom = bars.bottom)
+            insets
+        }
+    }
+
+    private fun missingBluetoothPermissions(): List<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return emptyList()
+        return listOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    }
+
     private fun requestRuntimePermissions() {
-        val needed = mutableListOf<String>()
+        val needed = missingBluetoothPermissions().toMutableList()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             needed += Manifest.permission.POST_NOTIFICATIONS
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-            needed += Manifest.permission.BLUETOOTH_CONNECT
-        }
-        if (needed.isNotEmpty()) {
-            requestPermissions(needed.toTypedArray(), REQ_PERMS)
-        }
+        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), REQ_PERMS)
     }
 
     override fun onRequestPermissionsResult(
@@ -105,26 +163,48 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_BT_SEND && pendingWatchSend) {
-            pendingWatchSend = false
-            sendToAmazCgm(silentFailure = false)
+        if (requestCode != REQ_PERMS) return
+        if (missingBluetoothPermissions().isEmpty()) {
+            if (hasStoredScan()) WatchHandoffService.start(this)
+            if (pendingMakeVisible) makeVisibleClicked()
+        } else if (pendingMakeVisible) {
+            Toast.makeText(this, R.string.ble_permission_denied, Toast.LENGTH_LONG).show()
         }
+        pendingMakeVisible = false
+        renderTransferCard()
+    }
+
+    /** "Make visible to watch": permissions, then Bluetooth on, then a fresh window. */
+    private fun makeVisibleClicked() {
+        if (!hasStoredScan()) return
+        val missing = missingBluetoothPermissions()
+        if (missing.isNotEmpty()) {
+            pendingMakeVisible = true
+            requestPermissions(missing.toTypedArray(), REQ_PERMS)
+            return
+        }
+        if (!ScanBlePeripheral.bluetoothOn(this)) {
+            try {
+                enableBluetooth.launch(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            } catch (_: Exception) {
+            }
+            return
+        }
+        WatchHandoffService.start(this)
     }
 
     override fun onResume() {
         super.onResume()
         val adapter = nfcAdapter
         if (adapter == null) {
-            binding.status.setText(R.string.no_nfc)
+            setNfcState(NfcState.MISSING)
             return
         }
         if (!adapter.isEnabled) {
-            binding.status.setText(R.string.nfc_disabled)
+            setNfcState(NfcState.OFF)
             return
         }
-        if (lastResult == null) {
-            binding.status.setText(R.string.ready)
-        }
+        if (lastResult == null) setNfcState(NfcState.READY)
         val options = Bundle().apply { putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 5000) }
         adapter.enableReaderMode(
             this,
@@ -145,16 +225,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     override fun onTagDiscovered(tag: Tag) {
         val enableStreaming = enableStreamingWanted.get()
         val unlockCode = unlockCodeWanted.get()
-        runOnUiThread { binding.status.setText(R.string.reading) }
+        runOnUiThread { setNfcState(NfcState.READING) }
         try {
             val result = scan(tag, enableStreaming, unlockCode)
             vibrate(longArrayOf(0, 60, 40, 60))
             runOnUiThread { show(result) }
         } catch (e: Throwable) {
             vibrate(longArrayOf(0, 400))
-            runOnUiThread {
-                binding.status.text = getString(R.string.scan_failed, e.message ?: e.javaClass.simpleName)
-            }
+            runOnUiThread { setNfcState(NfcState.ERROR, e.message ?: e.javaClass.simpleName) }
         }
     }
 
@@ -216,6 +294,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             if (!enabledNow && storedCode != unlockCode) {
                 notes += getString(R.string.note_code_not_written, unlockCode, storedCode)
             }
+            if (address == null && sensor.supportsOpenStreaming) {
+                notes += getString(R.string.no_ble_address)
+            }
 
             return ScanResult(
                 time = Date(),
@@ -236,112 +317,183 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     private fun show(result: ScanResult) {
         lastResult = result
-        setResultButtonsEnabled(true)
-        binding.status.text = getString(R.string.scanned, result.sensor.serial)
+        setNfcState(NfcState.DONE)
         // The field is the code in the JSON, not whatever was typed and not written.
         binding.unlockCode.setText(result.unlockCode.toString())
         unlockCodeWanted.set(result.unlockCode)
-        showGlucose(result)
-        binding.report.text = buildReport(result)
+
+        renderSensor(result.sensor, result.fram)
+        showGlucose(result.fram)
+        val notes = result.notes.toMutableList()
+        result.framError?.let { notes += getString(R.string.fram_error, it) }
+        renderNotes(notes)
+
         persistScanJson(result)
-        copyJsonSilent()
-        ScanServerService.start(this)
-        binding.serverStatus.visibility = android.view.View.VISIBLE
-        binding.serverStatus.text = getString(R.string.serving, scannerUrl())
-        sendToAmazCgm(silentFailure = true)
+        WatchHandoffService.start(this)
+        renderTransferCard()
     }
 
-    private fun showGlucose(result: ScanResult) {
-        val mgdl = result.fram?.currentMgdl
-        if (mgdl == null) {
-            binding.glucose.visibility = android.view.View.GONE
+    /** After a relaunch, show the last scan, which Share/Copy and Bluetooth still hand out. */
+    private fun restoreStoredScan() {
+        val json = prefs.getString(KEY_SCAN_JSON, null)?.takeIf { it.isNotBlank() } ?: return
+        try {
+            val data = JSONObject(json)
+            val uid = hexToBytes(data.getString("uid"))
+            val patch = hexToBytes(data.getString("patchInfo"))
+            if (uid.size != 8 || patch.size != 6) return
+            renderSensor(Sensor(uid, patch), null)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun renderSensor(sensor: Sensor, fram: FramInfo?) {
+        binding.serial.text = sensor.serial.ifBlank { sensor.uid.hex() }
+        binding.patchLabel.visibility = View.VISIBLE
+        binding.patchInfo.visibility = View.VISIBLE
+        binding.patchInfo.text = sensor.patchInfo.hex().chunked(4).joinToString(" ")
+
+        val chips = binding.sensorChips
+        chips.removeAllViews()
+        val typeLabel = if (sensor.isPlus) getString(R.string.chip_plus, sensor.type.label) else sensor.type.label
+        addChip(typeLabel)
+        addChip(sensor.region.label)
+        fram?.let { info ->
+            if (info.state != SensorState.UNKNOWN) addChip(info.state.label, info.state == SensorState.ACTIVE)
+            if (info.ageMinutes > 0) {
+                addChip(getString(R.string.chip_age, info.ageMinutes / 1440, (info.ageMinutes % 1440) / 60))
+            }
+            if (info.maxLifeMinutes > 0) addChip(getString(R.string.chip_life, info.maxLifeMinutes / 1440))
+        }
+        chips.visibility = View.VISIBLE
+    }
+
+    private fun addChip(text: String, highlight: Boolean = false) {
+        val chip = Chip(this).apply {
+            this.text = text
+            isClickable = false
+            isCheckable = false
+            if (highlight) {
+                chipBackgroundColor = ColorStateList.valueOf(
+                    MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondaryContainer)
+                )
+            }
+        }
+        binding.sensorChips.addView(chip)
+    }
+
+    private fun renderNotes(notes: List<String>) {
+        if (notes.isEmpty()) {
+            binding.notes.visibility = View.GONE
             return
         }
-        val mmol = mgdl / 18.0
-        val day1 = (result.fram?.ageMinutes ?: Int.MAX_VALUE) < DAY1_MINUTES
-        binding.glucose.visibility = android.view.View.VISIBLE
-        val text = StringBuilder()
-            .append(getString(R.string.glucose_reading, mmol, mgdl))
-            .append('\n')
-            .append(getString(R.string.glucose_factory))
-        if (day1) {
-            text.append('\n').append(getString(R.string.glucose_day1))
-        }
-        binding.glucose.text = text
+        binding.notes.visibility = View.VISIBLE
+        binding.notes.text = notes.joinToString("\n\n")
     }
+
+    private fun showGlucose(fram: FramInfo?) {
+        val mgdl = fram?.currentMgdl
+        if (mgdl == null) {
+            binding.glucose.visibility = View.GONE
+            binding.glucoseNote.visibility = View.GONE
+            return
+        }
+        binding.glucose.visibility = View.VISIBLE
+        binding.glucoseNote.visibility = View.VISIBLE
+        binding.glucose.text = getString(R.string.glucose_reading, mgdl / 18.0, mgdl)
+        val day1 = fram.ageMinutes < DAY1_MINUTES
+        binding.glucoseNote.text = if (day1) {
+            getString(R.string.glucose_factory) + " · " + getString(R.string.glucose_day1)
+        } else {
+            getString(R.string.glucose_factory)
+        }
+    }
+
+    private fun setNfcState(state: NfcState, detail: String? = null) {
+        val (title, hint, @DrawableRes icon) = when (state) {
+            NfcState.READY -> Triple(R.string.nfc_ready, getString(R.string.nfc_ready_hint), R.drawable.ic_nfc)
+            NfcState.READING -> Triple(R.string.nfc_reading, getString(R.string.nfc_reading_hint), R.drawable.ic_nfc)
+            NfcState.DONE -> Triple(R.string.nfc_done, getString(R.string.nfc_done_hint), R.drawable.ic_check)
+            NfcState.ERROR -> Triple(R.string.nfc_error, detail ?: "", R.drawable.ic_error)
+            NfcState.OFF -> Triple(R.string.nfc_off, getString(R.string.nfc_off_hint), R.drawable.ic_error)
+            NfcState.MISSING -> Triple(R.string.nfc_missing, getString(R.string.nfc_missing_hint), R.drawable.ic_error)
+        }
+        val error = state == NfcState.ERROR || state == NfcState.OFF || state == NfcState.MISSING
+        fun color(attr: Int) = MaterialColors.getColor(binding.nfcCard, attr)
+        val attrs = com.google.android.material.R.attr.colorErrorContainer to
+            com.google.android.material.R.attr.colorPrimaryContainer
+        binding.nfcCard.setCardBackgroundColor(color(if (error) attrs.first else attrs.second))
+        val onColor = color(
+            if (error) {
+                com.google.android.material.R.attr.colorOnErrorContainer
+            } else {
+                com.google.android.material.R.attr.colorOnPrimaryContainer
+            }
+        )
+        binding.nfcTitle.setTextColor(onColor)
+        binding.nfcSubtitle.setTextColor(onColor)
+        binding.nfcTitle.setText(title)
+        binding.nfcSubtitle.text = hint
+        binding.nfcIcon.setImageResource(icon)
+        binding.nfcProgress.visibility = if (state == NfcState.READING) View.VISIBLE else View.GONE
+    }
+
+    private fun renderTransferCard() {
+        if (!::binding.isInitialized) return
+        val hasScan = hasStoredScan()
+        binding.shareJsonButton.isEnabled = hasScan
+        binding.copyJsonButton.isEnabled = hasScan
+        renderBluetooth(hasScan)
+
+        val served = prefs.getLong(KEY_LAST_SERVED, 0L)
+        binding.lastFetched.text = if (served > 0) {
+            val date = Date(served)
+            val day = if (android.text.format.DateUtils.isToday(served)) "" else DateFormat.getDateFormat(this).format(date) + " "
+            getString(R.string.last_fetched, day + DateFormat.getTimeFormat(this).format(date))
+        } else {
+            getString(R.string.never_fetched)
+        }
+    }
+
+    private fun renderBluetooth(hasScan: Boolean) {
+        val until = prefs.getLong(KEY_BLE_UNTIL, 0L)
+        val stateName = prefs.getString(KEY_BLE_STATE, null)
+        val state = ScanBlePeripheral.State.entries.firstOrNull { it.name == stateName }
+            ?: ScanBlePeripheral.State.OFF
+        val leftMs = until - System.currentTimeMillis()
+        val running = WatchHandoffService.running
+        val visible = running && state == ScanBlePeripheral.State.VISIBLE && leftMs > 0
+        val missing = missingBluetoothPermissions().isNotEmpty()
+        val btOn = ScanBlePeripheral.bluetoothOn(this)
+        binding.bleStatus.text = when {
+            !hasScan -> getString(R.string.no_scan_yet)
+            missing -> getString(R.string.ble_no_permission)
+            !btOn -> getString(R.string.ble_off)
+            visible && leftMs >= 60_000L -> getString(R.string.ble_visible, (leftMs / 60_000L).toInt())
+            visible -> getString(R.string.ble_visible_short)
+            running && state == ScanBlePeripheral.State.STARTING ->
+                getString(R.string.ble_starting)
+            state == ScanBlePeripheral.State.UNSUPPORTED -> getString(R.string.ble_unsupported)
+            state == ScanBlePeripheral.State.ERROR ->
+                getString(R.string.ble_error_code, prefs.getInt(KEY_BLE_ERROR, 0))
+            else -> getString(R.string.ble_not_visible)
+        }
+        val dotAttr = if (visible) {
+            com.google.android.material.R.attr.colorPrimary
+        } else {
+            com.google.android.material.R.attr.colorOutline
+        }
+        binding.bleDot.backgroundTintList =
+            ColorStateList.valueOf(MaterialColors.getColor(binding.bleDot, dotAttr))
+        binding.bleVisibleButton.isEnabled = hasScan && state != ScanBlePeripheral.State.UNSUPPORTED
+    }
+
+    private fun hasStoredScan() = !prefs.getString(KEY_SCAN_JSON, null).isNullOrBlank()
+
+    private fun storedJson(): String? =
+        lastResult?.toJson()?.toString() ?: prefs.getString(KEY_SCAN_JSON, null)?.takeIf { it.isNotBlank() }
 
     private fun persistScanJson(result: ScanResult) {
         prefs.edit().putString(KEY_SCAN_JSON, result.toJson().toString()).apply()
-    }
-
-    private fun buildReport(result: ScanResult): String {
-        val s = result.sensor
-        val sb = StringBuilder()
-
-        sb.appendLine("SENSOR")
-        sb.appendLine("  Serial (BLE name)  ${s.serial}")
-        sb.appendLine("  Type               ${s.type.label}${if (s.isPlus) " Plus" else ""}")
-        sb.appendLine("  Region             ${s.region.label}")
-        sb.appendLine("  Security gen       ${s.securityGeneration}")
-        sb.appendLine("  UID                ${s.uid.hex()}")
-        sb.appendLine("  Patch info         ${s.patchInfo.hex()}")
-
-        result.fram?.let {
-            sb.appendLine()
-            sb.appendLine("STATUS")
-            sb.appendLine("  State              ${it.state.label}")
-            sb.appendLine("  Age                ${it.ageMinutes / 60} h ${it.ageMinutes % 60} min")
-            if (it.maxLifeMinutes > 0) {
-                sb.appendLine("  Wear duration      ${it.maxLifeMinutes / 1440} days")
-            }
-            sb.appendLine("  FRAM checksums     ${if (it.crcOk) "OK (decryption verified)" else "FAILED"}")
-            if (it.crcOk) sb.appendLine("  Latest raw value   ${it.latestRawGlucose}")
-            it.currentMgdl?.let { mgdl ->
-                val mmol = mgdl / 18.0
-                sb.appendLine(
-                    "  Glucose            ${"%.1f".format(Locale.US, mmol)} mmol/L ($mgdl mg/dL)"
-                )
-                sb.appendLine("  Algorithm          factory (LibreLink 2.3)")
-                if (it.ageMinutes < DAY1_MINUTES) {
-                    sb.appendLine("  Note               Day 1: reads lower than LibreLink")
-                }
-            }
-        }
-        result.framError?.let {
-            sb.appendLine()
-            sb.appendLine("STATUS")
-            sb.appendLine("  FRAM read failed: $it")
-        }
-
-        sb.appendLine()
-        sb.appendLine("BLUETOOTH PAIRING DATA")
-        if (result.bleAddress != null) {
-            sb.appendLine("  MAC address        ${result.bleAddress.bleAddress()}")
-        } else {
-            sb.appendLine("  MAC address        (unknown - tick \"enable BLE streaming\" and rescan)")
-        }
-        sb.appendLine("  Unlock code        ${result.unlockCode}")
-        sb.appendLine("  Next unlock count  ${result.nextUnlockCount}")
-        sb.appendLine("  Service / write    FDE3 / F001")
-        sb.appendLine("  Notify             F002")
-        sb.appendLine()
-        sb.appendLine("  Unlock payloads (write to F001, one per connection):")
-        for (count in result.nextUnlockCount until result.nextUnlockCount + 3) {
-            sb.appendLine("    count $count".padEnd(14) + result.unlockPayload(count).hex())
-        }
-
-        if (result.streamingWasEnabled) {
-            sb.appendLine()
-            sb.appendLine("BLE streaming was (re)enabled during this scan.")
-        }
-
-        if (result.notes.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("NOTES")
-            result.notes.forEach { sb.appendLine("  - $it") }
-        }
-
-        return sb.toString().trimEnd()
     }
 
     private fun parseUnlockCode(text: String?): Long {
@@ -349,96 +501,27 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         return if (value != null && value in 1..0xFFFFFFFFL) value else DEFAULT_UNLOCK_CODE
     }
 
-    private fun setResultButtonsEnabled(enabled: Boolean) {
-        binding.sendWatchButton.isEnabled = enabled
-        binding.copyButton.isEnabled = enabled
-        binding.shareButton.isEnabled = enabled
-    }
-
-    private fun onSendWatchClicked() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingWatchSend = true
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BT_SEND)
-            return
-        }
-        sendToAmazCgm(silentFailure = false)
-    }
-
-    private fun sendToAmazCgm(silentFailure: Boolean) {
-        if (sendingToWatch) return
-        val json = lastResult?.toJson()?.toString()
-            ?: prefs.getString(KEY_SCAN_JSON, null)?.takeIf { it.isNotBlank() }
-            ?: return
-
-        ScanServerService.start(this)
-        sendingToWatch = true
-        binding.sendWatchButton.isEnabled = false
-        binding.sendWatchButton.setText(R.string.sending_to_amazcgm)
-
-        AmazCgmSender.send(this, json) { outcome ->
-            sendingToWatch = false
-            binding.sendWatchButton.isEnabled = true
-            binding.sendWatchButton.setText(R.string.send_to_amazcgm)
-            when (outcome) {
-                is SendResult.Success -> {
-                    val msg = getString(R.string.sent_to_amazcgm, outcome.serial, outcome.transport)
-                    binding.status.text = msg
-                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-                }
-                is SendResult.Failure -> {
-                    if (!silentFailure) {
-                        Toast.makeText(this, outcome.reason, Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun copyJsonSilent() {
-        val json = lastResult?.toJson()?.toString(2) ?: return
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Libre 2 keys", json))
-    }
-
     private fun copyJson() {
-        copyJsonSilent()
-        Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
+        val json = storedJson() ?: return
+        val pretty = try { JSONObject(json).toString(2) } catch (_: Exception) { json }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Libre 2 keys", pretty))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun shareJson() {
-        val result = lastResult ?: return
-        val body = result.toJson().toString(2) + "\n\n" + scannerUrl()
+        val json = storedJson() ?: return
+        val data = try { JSONObject(json) } catch (_: Exception) { null }
+        val serial = data?.optString("serial").orEmpty()
+        val body = data?.toString(2) ?: json
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Libre 2 keys ${result.sensor.serial}")
+            putExtra(Intent.EXTRA_SUBJECT, "Libre 2 keys $serial".trim())
             putExtra(Intent.EXTRA_TEXT, body)
         }
         startActivity(Intent.createChooser(intent, getString(R.string.share)))
-    }
-
-    /** Wi‑Fi IPv4 of this phone, for the iPhone Zepp companion on the same network. */
-    private fun lanIpv4(): String? {
-        return try {
-            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            for (iface in Collections.list(ifaces)) {
-                if (!iface.isUp || iface.isLoopback) continue
-                for (addr in Collections.list(iface.inetAddresses)) {
-                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        return addr.hostAddress
-                    }
-                }
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun scannerUrl(): String {
-        val ip = lanIpv4() ?: "PHONE-WIFI-IP"
-        return "http://$ip:${ScanHttpServer.PORT}${ScanHttpServer.PATH}"
     }
 
     private fun vibrate(pattern: LongArray) {
@@ -461,10 +544,19 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     companion object {
         const val PREFS = "libre2key"
         const val KEY_SCAN_JSON = "scan_json"
+        const val KEY_LAST_SERVED = "last_served_at"
+        /** Touched by the service on start and stop so the activity re-renders. */
+        const val KEY_HANDOFF_STATE = "handoff_state_at"
+        const val KEY_BLE_STATE = "ble_state"
+        const val KEY_BLE_UNTIL = "ble_visible_until"
+        const val KEY_BLE_ERROR = "ble_error_code"
+        private val TRANSFER_KEYS = setOf(
+            KEY_LAST_SERVED, KEY_SCAN_JSON, KEY_HANDOFF_STATE, KEY_BLE_STATE, KEY_BLE_UNTIL, KEY_BLE_ERROR
+        )
+        private const val TICK_MS = 15_000L
         private const val KEY_LAST_CODE = "last_unlock_code"
         private const val DEFAULT_UNLOCK_CODE = 42L
         private const val DAY1_MINUTES = 24 * 60
         private const val REQ_PERMS = 1
-        private const val REQ_BT_SEND = 2
     }
 }

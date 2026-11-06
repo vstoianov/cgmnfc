@@ -38,8 +38,7 @@ class ScanResultJsonTest {
                 "bleAddress",
                 "unlockCode",
                 "nextUnlockCount",
-                "streamingEnabled",
-                "unlockPayloads"
+                "streamingEnabled"
             ),
             keys
         )
@@ -49,7 +48,7 @@ class ScanResultJsonTest {
         assertEquals("AA:BB:CC:DD:EE:FF", json.getString("bleAddress"))
         assertEquals("42", json.getString("unlockCode"))
         assertEquals("1", json.getString("streamingEnabled"))
-        assertEquals(3, json.getJSONArray("unlockPayloads").length())
+        assertFalse(json.has("unlockPayloads"))
         assertTrue(json.getString("uid").equals("2FE7B10000A407E0", ignoreCase = true))
     }
 
