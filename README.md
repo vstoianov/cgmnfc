@@ -9,9 +9,9 @@ Android companion for AmazCGM. It reads a FreeStyle Libre 2 Plus (EU) sensor ove
 3. In Zepp open **Profile → your watch → App settings → AmazCGM** and tap **Paste JSON**.
 4. On the watch open AmazCGM and tap **Sync from phone**.
 
-### Direct Bluetooth (experimental)
+### Direct Bluetooth
 
-After a scan, the phone is also visible to the watch over Bluetooth for 10 minutes, so **Sync from phone** can pull the scan straight from this phone without Zepp. Tap **Make visible to watch** to open a new window. This needs the **Nearby devices** permission. While visible, the phone calls itself **AMZCGM** in Bluetooth; its normal name is restored afterwards. This path is still being tested; the Share JSON steps above always work.
+After a scan, the phone is also visible to the watch over Bluetooth for 10 minutes, so **Sync from phone** can pull the scan straight from this phone without Zepp. Tap **Make visible to watch** to open a new window. This needs the **Nearby devices** permission. While visible, the phone calls itself **AMZCGM** in Bluetooth; its normal name is restored afterwards. If it does not connect, the Share JSON steps above always work.
 
 ## Bluetooth protocol
 
@@ -157,7 +157,7 @@ Open **Libre2 Key** from the launcher, or start it from the computer:
 adb shell am start -n com.vstoianov.libre2key/.MainActivity
 ```
 
-On first start, allow **Nearby devices** and notifications. They are only needed for the experimental direct Bluetooth transfer.
+On first start, allow **Nearby devices** and notifications. They are only needed for the direct Bluetooth transfer.
 
 ### Troubleshooting
 

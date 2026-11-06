@@ -34,7 +34,7 @@
     <string name="send_steps">1. Tap Share JSON and send it to the phone that has the Zepp app.\n2. In Zepp open AmazCGM settings → Paste JSON.\n3. On the watch open AmazCGM and tap Sync from phone.</string>
     <string name="share_json">Share JSON</string>
     <string name="copy_json">Copy JSON</string>
-    <string name="ble_title">Direct Bluetooth (experimental)</string>
+    <string name="ble_title">Direct Bluetooth</string>
     <string name="ble_hint">Lets the watch pull the scan straight from this phone with Sync from phone. While visible, this phone is named AMZCGM in Bluetooth; its name is restored afterwards.</string>
     <string name="ble_make_visible">Make visible to watch</string>
     <string name="ble_visible">Visible · %1$d min left</string>

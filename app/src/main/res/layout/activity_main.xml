@@ -264,7 +264,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginVertical="20dp" />
 
-                    <!-- Direct Bluetooth: experimental -->
+                    <!-- Direct Bluetooth -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
