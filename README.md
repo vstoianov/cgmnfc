@@ -174,3 +174,10 @@ On first start, allow **Nearby devices** and notifications. They are only needed
   ```sh
   adb logcat --pid=$(adb shell pidof -s com.vstoianov.libre2key)
   ```
+## License
+
+Libre2 Key is licensed under the [GNU General Public License v3.0 or later](LICENSE). You may use, study, change and share it. If you distribute a changed version, it must also be released under the GPL with its source code.
+
+Bundled third-party code keeps its own MIT license. See [NOTICE](NOTICE).
+
+FreeStyle Libre is a trademark of Abbott. Amazfit and Zepp are trademarks of Zepp Health. They are used here only to describe compatibility.
