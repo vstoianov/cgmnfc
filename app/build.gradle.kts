@@ -11,8 +11,8 @@ android {
         applicationId = "com.vstoianov.libre2key"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 10
+        versionName = "1.9"
     }
 
     buildTypes {

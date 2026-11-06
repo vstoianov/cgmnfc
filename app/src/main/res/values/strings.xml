@@ -1,36 +1,73 @@
 <resources>
     <string name="app_name">Libre2 Key</string>
+    <string name="app_subtitle">Sensor setup for AmazCGM</string>
 
-    <string name="ready">Hold the sensor against the top of the phone</string>
-    <string name="reading">Reading sensor…</string>
-    <string name="scanned">Read sensor %1$s</string>
-    <string name="scan_failed">Scan failed: %1$s</string>
-    <string name="no_nfc">This phone has no NFC hardware</string>
-    <string name="nfc_disabled">NFC is turned off — enable it in Settings</string>
+    <!-- NFC state card -->
+    <string name="nfc_ready">Ready to scan</string>
+    <string name="nfc_ready_hint">Hold the sensor against the top back of the phone</string>
+    <string name="nfc_reading">Reading sensor…</string>
+    <string name="nfc_reading_hint">Keep the sensor still</string>
+    <string name="nfc_done">Sensor read</string>
+    <string name="nfc_done_hint">Scan again at any time to refresh</string>
+    <string name="nfc_error">Scan failed</string>
+    <string name="nfc_off">NFC is turned off</string>
+    <string name="nfc_off_hint">Turn on NFC in the phone settings</string>
+    <string name="nfc_missing">No NFC on this phone</string>
+    <string name="nfc_missing_hint">A phone with NFC is needed to read the sensor</string>
     <string name="not_nfcv">Not an ISO 15693 tag, so not a Libre sensor</string>
 
+    <!-- Sensor card -->
+    <string name="sensor_overline">Sensor</string>
+    <string name="no_sensor_yet">No sensor scanned yet</string>
+    <string name="patch_info">Patch info</string>
+    <string name="chip_plus">%1$s Plus</string>
+    <string name="chip_age">%1$d d %2$d h</string>
+    <string name="chip_life">%1$d-day</string>
+    <string name="glucose_reading">%1$.1f mmol/L · %2$d mg/dL</string>
+    <string name="glucose_factory">Factory algorithm (LibreLink 2.3)</string>
+    <string name="glucose_day1">Day 1: reads lower than LibreLink</string>
+    <string name="fram_error">Could not read sensor memory: %1$s</string>
+    <string name="no_ble_address">Bluetooth address unknown. Turn on \"Enable BLE streaming\" and scan again.</string>
+
+    <!-- Send to watch card -->
+    <string name="send_title">Send to watch</string>
+    <string name="send_steps">1. Tap Share JSON and send it to the phone that has the Zepp app.\n2. In Zepp open AmazCGM settings → Paste JSON.\n3. On the watch open AmazCGM and tap Sync from phone.</string>
+    <string name="share_json">Share JSON</string>
+    <string name="copy_json">Copy JSON</string>
+    <string name="ble_title">Direct Bluetooth (experimental)</string>
+    <string name="ble_hint">Lets the watch pull the scan straight from this phone with Sync from phone. While visible, this phone is named AMZCGM in Bluetooth; its name is restored afterwards.</string>
+    <string name="ble_make_visible">Make visible to watch</string>
+    <string name="ble_visible">Visible · %1$d min left</string>
+    <string name="ble_visible_short">Visible · under 1 min</string>
+    <string name="ble_not_visible">Not visible</string>
+    <string name="ble_off">Bluetooth is off</string>
+    <string name="ble_no_permission">Permission needed</string>
+    <string name="ble_unsupported">Not supported on this phone</string>
+    <string name="ble_starting">Starting…</string>
+    <string name="ble_error">Could not start</string>
+    <string name="ble_error_code">Could not start (code %1$d)</string>
+    <string name="ble_permission_denied">Allow "Nearby devices" so the watch can find this phone</string>
+    <string name="no_scan_yet">Scan a sensor first</string>
+    <string name="never_fetched">Not fetched by the watch yet</string>
+    <string name="last_fetched">Fetched by the watch at %1$s</string>
+    <string name="handoff_channel">Watch transfer</string>
+    <string name="handoff_notification_title">Visible to AmazCGM</string>
+    <string name="handoff_notification_text">On the watch open AmazCGM and tap Sync from phone</string>
+    <string name="handoff_stop">Stop</string>
+
+    <!-- Scan options -->
+    <string name="scan_options">Scan options</string>
     <string name="enable_streaming">Enable BLE streaming on scan</string>
     <string name="enable_streaming_hint_off">Read only: reports the sensor identity and, if a key was already generated, repeats it. Nothing is written to the sensor.</string>
     <string name="enable_streaming_hint_on">Writes the unlock code to the sensor and turns its Bluetooth on. This invalidates the key any other app or device is currently using for this sensor.</string>
-    <string name="unlock_code">Unlock code (any 32-bit number)</string>
+    <string name="unlock_code">Unlock code</string>
+    <string name="unlock_code_helper">Any number from 1 to 4294967295</string>
 
-    <string name="copy_json">Copy JSON</string>
     <string name="share">Share</string>
-    <string name="send_to_amazcgm">Send to AmazCGM</string>
-    <string name="sending_to_amazcgm">Sending to AmazCGM…</string>
-    <string name="sent_to_amazcgm">Sent to AmazCGM (%1$s via %2$s)</string>
     <string name="copied">Copied to clipboard</string>
-    <string name="glucose_reading">%1$.1f mmol/L (%2$d mg/dL)</string>
-    <string name="glucose_factory">Factory algorithm (LibreLink 2.3)</string>
-    <string name="glucose_day1">Day 1: reads lower than LibreLink</string>
-    <string name="glucose_age">%1$d min ago</string>
-    <string name="serving">Zepp is on another phone. Share this JSON to that iPhone and paste it in Zepp → Libre 2+.\nSame Wi‑Fi: %1$s</string>
-    <string name="server_notification_title">Libre2 Key ready</string>
-    <string name="server_notification_text">Share the JSON to the iPhone that runs Zepp</string>
-    <string name="server_stop">Stop</string>
 
     <string name="note_gen2">This is a generation-2 security sensor. Its BLE unlock is not covered by the open Libre 2 crypto, so the key cannot be derived here.</string>
     <string name="note_unsupported_type">Sensor type %1$s does not use the Libre 2 BLE streaming protocol.</string>
     <string name="note_crc_failed">FRAM checksums did not validate, so the sensor data could not be confirmed. The keys may still be correct.</string>
-    <string name="note_code_not_written">Typed unlock code %1$d was not written. JSON still uses %2$d from the last streaming enable. Tick \"Enable BLE streaming\" and scan again to write %1$d.</string>
+    <string name="note_code_not_written">Typed unlock code %1$d was not written. The watch still gets %2$d from the last streaming enable. Turn on \"Enable BLE streaming\" and scan again to write %1$d.</string>
 </resources>
